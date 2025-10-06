@@ -1,0 +1,109 @@
+from typing import List, Tuple
+import logging
+import re
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+
+PROVIDER_CARD_XPATH = "//div[@data-sentry-component='ProviderCardFull']"
+BUTTON_IN_CARD_XPATH = ".//div[@data-sentry-element='TextPriceButtonTariff']"
+
+
+def _build_driver(headless: bool, wait_seconds: int) -> webdriver.Chrome:
+    options = Options()
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    driver = webdriver.Chrome(options=options)
+    driver.set_page_load_timeout(60)
+    driver.implicitly_wait(wait_seconds)
+    return driver
+
+
+def _normalize_text(value: str) -> str:
+    lowered = (value or "").replace("\xa0", " ").lower()
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _has_span_with_text(card, text: str) -> bool:
+    xp = f".//span[normalize-space(text())='{text}']"
+    return len(card.find_elements(By.XPATH, xp)) > 0
+
+
+def _extract_provider_name(card) -> str:
+    for xp in [
+        ".//*[@role='heading']",
+        ".//h1",
+        ".//h2",
+        ".//h3",
+        ".//h4",
+        ".//h5",
+    ]:
+        elems = card.find_elements(By.XPATH, xp)
+        for el in elems:
+            name = (el.text or "").strip()
+            if name:
+                return name
+    text = (card.text or "").strip()
+    if text:
+        return text.splitlines()[0][:80]
+    return "Неизвестный провайдер"
+
+
+def check_url_for_missing_fee(url: str, headless: bool, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
+    """
+    Возвращает (провайдеры_без_абонплаты, всего_карточек, проверено_карточек).
+    Логика выбора карточек для проверки:
+    - Если число карточек с кнопкой TextPriceButtonTariff меньше общего числа карточек,
+      проверяем только карточки с кнопкой.
+    - Иначе проверяем все карточки.
+    Карточка считается проверяемой на «Абонентская плата» только если в ней есть «Скорость» и «Подключение».
+    """
+    missing: List[str] = []
+    driver = _build_driver(headless=headless, wait_seconds=wait_seconds)
+    total_cards = 0
+    checked_cards = 0
+    try:
+        logging.info("Открываю URL: %s", url)
+        driver.get(url)
+
+        WebDriverWait(driver, wait_seconds).until(
+            EC.presence_of_element_located((By.XPATH, PROVIDER_CARD_XPATH))
+        )
+
+        cards = driver.find_elements(By.XPATH, PROVIDER_CARD_XPATH)
+        total_cards = len(cards)
+        logging.info("Найдено карточек провайдеров: %s", total_cards)
+
+        cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
+        if len(cards_with_button) < total_cards:
+            target_cards = cards_with_button
+            logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
+        else:
+            target_cards = cards
+            logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
+
+        for idx, card in enumerate(target_cards, start=1):
+            has_speed = _has_span_with_text(card, "Скорость")
+            has_connect = _has_span_with_text(card, "Подключение")
+            if not (has_speed and has_connect):
+                # По ТЗ проверяем «Абонентская плата» только если есть «Скорость» и «Подключение»
+                continue
+            checked_cards += 1
+
+            has_fee = _has_span_with_text(card, "Абонентская плата")
+            if not has_fee:
+                name = _extract_provider_name(card)
+                if not name:
+                    name = f"Провайдер #{idx}"
+                missing.append(name)
+        return missing, total_cards, checked_cards
+    finally:
+        driver.quit()
