@@ -15,6 +15,7 @@ class Config:
     urls_dir: str
     headless: bool
     alerts_enabled: bool
+    success_alerts_enabled: bool
     bot_token: Optional[str]
     chat_id: Optional[str]
     sheet_id: Optional[str]
@@ -30,6 +31,7 @@ def load_config() -> Config:
     urls_dir = os.getenv("URLS_DIR", "data/urls")
     headless = _parse_bool(os.getenv("HEADLESS", "true"), True)
     alerts_enabled = _parse_bool(os.getenv("ALERTS_ENABLED", "true"), True)
+    success_alerts_enabled = _parse_bool(os.getenv("SUCCESS_ALERTS_ENABLED", "false"), False)
 
     bot_token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
@@ -50,6 +52,7 @@ def load_config() -> Config:
         urls_dir=urls_dir,
         headless=headless,
         alerts_enabled=alerts_enabled,
+        success_alerts_enabled=success_alerts_enabled,
         bot_token=bot_token,
         chat_id=chat_id,
         sheet_id=sheet_id,

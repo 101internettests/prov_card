@@ -76,6 +76,18 @@ def main() -> int:
             else:
                 logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
 
+    if not any_failures and config.success_alerts_enabled:
+        groups_list = ", ".join(sorted(selected.keys()))
+        send_telegram_alert(
+            enabled=True,  # успехи отправляем только если глобально включено SUCCESS_ALERTS_ENABLED
+            bot_token=config.bot_token,
+            chat_id=config.chat_id,
+            message=(
+                "Проверка прошла успешно\n"
+                f"Группы: {groups_list}"
+            ),
+        )
+
     return 1 if any_failures else 0
 
 
