@@ -15,7 +15,7 @@ if _SRC not in _sys.path:
 
 from src.config import load_config
 from src.logging_setup import setup_logging
-from src.selenium_checker import check_url_for_missing_fee
+from src.selenium_checker import check_url_with_driver, build_driver
 from src.sheets_appender import append_negative_result, get_sheet_url
 from src.telegram_alerts import send_telegram_alert
 from src.url_source import load_groups
@@ -51,46 +51,50 @@ def main() -> int:
     any_failures = False
     for group_name, urls in selected.items():
         logging.info("Группа: %s (кол-во URL: %d)", group_name, len(urls))
-        for url in urls:
-            missing, total, checked = check_url_for_missing_fee(
-                url=url,
-                headless=config.headless,
-                wait_seconds=config.wait_timeout_seconds,
-            )
-            is_failure = bool(missing)
-            if is_failure:
-                any_failures = True
-                logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
-
-                append_negative_result(
-                    sheet_id=config.sheet_id,
-                    service_account_json=config.google_service_account_json,
-                    worksheet_title=config.sheet_worksheet_title,
+        driver = build_driver(headless=config.headless, wait_seconds=config.wait_timeout_seconds)
+        try:
+            for url in urls:
+                missing, total, checked = check_url_with_driver(
+                    driver=driver,
                     url=url,
-                    when_utc=datetime.now(timezone.utc),
-                    providers_without_fee=missing,
+                    wait_seconds=config.wait_timeout_seconds,
                 )
+                is_failure = bool(missing)
+                if is_failure:
+                    any_failures = True
+                    logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
 
-                should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
-                if should_alert:
-                    parsed = urlparse(url)
-                    domain = parsed.netloc
-                    sheet_url = get_sheet_url(config.sheet_id) or ""
-                    message = (
-                        "Пропало поле «Абонентская плата»\n"
-                        f"Сайт: {domain}\n"
-                        f"Страница: {url}\n"
-                        f"Ссылка на отчёт: {sheet_url}"
+                    append_negative_result(
+                        sheet_id=config.sheet_id,
+                        service_account_json=config.google_service_account_json,
+                        worksheet_title=config.sheet_worksheet_title,
+                        url=url,
+                        when_utc=datetime.now(timezone.utc),
+                        providers_without_fee=missing,
                     )
-                    send_telegram_alert(
-                        enabled=config.alerts_enabled,
-                        bot_token=config.bot_token,
-                        chat_id=config.chat_id,
-                        message=message,
-                    )
-            else:
-                logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
-                update_status_for_check(config.stats_file, url, is_failure=False)
+
+                    should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
+                    if should_alert:
+                        parsed = urlparse(url)
+                        domain = parsed.netloc
+                        sheet_url = get_sheet_url(config.sheet_id) or ""
+                        message = (
+                            "Пропало поле «Абонентская плата»\n"
+                            f"Сайт: {domain}\n"
+                            f"Страница: {url}\n"
+                            f"Ссылка на отчёт: {sheet_url}"
+                        )
+                        send_telegram_alert(
+                            enabled=config.alerts_enabled,
+                            bot_token=config.bot_token,
+                            chat_id=config.chat_id,
+                            message=message,
+                        )
+                else:
+                    logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
+                    update_status_for_check(config.stats_file, url, is_failure=False)
+        finally:
+            driver.quit()
 
     if not any_failures and config.success_alerts_enabled:
         groups_list = ", ".join(sorted(selected.keys()))

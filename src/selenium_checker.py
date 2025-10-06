@@ -13,7 +13,7 @@ PROVIDER_CARD_XPATH = "//div[@data-sentry-component='ProviderCardFull']"
 BUTTON_IN_CARD_XPATH = ".//div[@data-sentry-element='TextPriceButtonTariff']"
 
 
-def _build_driver(headless: bool, wait_seconds: int) -> webdriver.Chrome:
+def build_driver(headless: bool, wait_seconds: int) -> webdriver.Chrome:
     options = Options()
     if headless:
         options.add_argument("--headless=new")
@@ -21,6 +21,7 @@ def _build_driver(headless: bool, wait_seconds: int) -> webdriver.Chrome:
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    # Можно ускорить: options.page_load_strategy = 'eager'
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(60)
     driver.implicitly_wait(wait_seconds)
@@ -57,53 +58,57 @@ def _extract_provider_name(card) -> str:
     return "Неизвестный провайдер"
 
 
-def check_url_for_missing_fee(url: str, headless: bool, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
+def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
     """
+    Проверка страницы, используя уже созданный драйвер.
     Возвращает (провайдеры_без_абонплаты, всего_карточек, проверено_карточек).
-    Логика выбора карточек для проверки:
-    - Если число карточек с кнопкой TextPriceButtonTariff меньше общего числа карточек,
-      проверяем только карточки с кнопкой.
-    - Иначе проверяем все карточки.
-    Карточка считается проверяемой на «Абонентская плата» только если в ней есть «Скорость» и «Подключение».
+    Логика выбора карточек:
+    - Если карточек с кнопкой TextPriceButtonTariff меньше всех карточек — проверяем только их; иначе все.
+    - Карточка проверяется, если содержит «Скорость» и «Подключение». В такой карточке ищем «Абонентская плата».
     """
     missing: List[str] = []
-    driver = _build_driver(headless=headless, wait_seconds=wait_seconds)
     total_cards = 0
     checked_cards = 0
+
+    logging.info("Открываю URL: %s", url)
+    driver.get(url)
+
+    WebDriverWait(driver, wait_seconds).until(
+        EC.presence_of_element_located((By.XPATH, PROVIDER_CARD_XPATH))
+    )
+
+    cards = driver.find_elements(By.XPATH, PROVIDER_CARD_XPATH)
+    total_cards = len(cards)
+    logging.info("Найдено карточек провайдеров: %s", total_cards)
+
+    cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
+    if len(cards_with_button) < total_cards:
+        target_cards = cards_with_button
+        logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
+    else:
+        target_cards = cards
+        logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
+
+    for idx, card in enumerate(target_cards, start=1):
+        has_speed = _has_span_with_text(card, "Скорость")
+        has_connect = _has_span_with_text(card, "Подключение")
+        if not (has_speed and has_connect):
+            continue
+        checked_cards += 1
+
+        has_fee = _has_span_with_text(card, "Абонентская плата")
+        if not has_fee:
+            name = _extract_provider_name(card)
+            if not name:
+                name = f"Провайдер #{idx}"
+            missing.append(name)
+
+    return missing, total_cards, checked_cards
+
+
+def check_url_for_missing_fee(url: str, headless: bool, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
+    driver = build_driver(headless=headless, wait_seconds=wait_seconds)
     try:
-        logging.info("Открываю URL: %s", url)
-        driver.get(url)
-
-        WebDriverWait(driver, wait_seconds).until(
-            EC.presence_of_element_located((By.XPATH, PROVIDER_CARD_XPATH))
-        )
-
-        cards = driver.find_elements(By.XPATH, PROVIDER_CARD_XPATH)
-        total_cards = len(cards)
-        logging.info("Найдено карточек провайдеров: %s", total_cards)
-
-        cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
-        if len(cards_with_button) < total_cards:
-            target_cards = cards_with_button
-            logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
-        else:
-            target_cards = cards
-            logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
-
-        for idx, card in enumerate(target_cards, start=1):
-            has_speed = _has_span_with_text(card, "Скорость")
-            has_connect = _has_span_with_text(card, "Подключение")
-            if not (has_speed and has_connect):
-                # По ТЗ проверяем «Абонентская плата» только если есть «Скорость» и «Подключение»
-                continue
-            checked_cards += 1
-
-            has_fee = _has_span_with_text(card, "Абонентская плата")
-            if not has_fee:
-                name = _extract_provider_name(card)
-                if not name:
-                    name = f"Провайдер #{idx}"
-                missing.append(name)
-        return missing, total_cards, checked_cards
+        return check_url_with_driver(driver, url, wait_seconds)
     finally:
         driver.quit()
