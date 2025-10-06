@@ -23,6 +23,7 @@ class Config:
     sheet_worksheet_title: Optional[str]
     wait_timeout_seconds: int
     log_dir: str
+    stats_file: str
 
 
 def load_config() -> Config:
@@ -47,6 +48,7 @@ def load_config() -> Config:
         wait_timeout_seconds = 15
 
     log_dir = os.getenv("LOG_DIR", "logs")
+    stats_file = os.getenv("STATS_FILE", "data/stat_prov.json")
 
     return Config(
         urls_dir=urls_dir,
@@ -60,4 +62,5 @@ def load_config() -> Config:
         sheet_worksheet_title=sheet_worksheet_title,
         wait_timeout_seconds=wait_timeout_seconds,
         log_dir=log_dir,
+        stats_file=stats_file,
     )

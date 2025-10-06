@@ -9,6 +9,7 @@ from src.selenium_checker import check_url_for_missing_fee
 from src.sheets_appender import append_negative_result, get_sheet_url
 from src.telegram_alerts import send_telegram_alert
 from src.url_source import load_groups
+from src.escalation import update_status_for_check
 
 
 @pytest.mark.e2e
@@ -34,7 +35,8 @@ def test_provider_cards_abonent_fee():
                 headless=config.headless,
                 wait_seconds=config.wait_timeout_seconds,
             )
-            if missing:
+            is_failure = bool(missing)
+            if is_failure:
                 any_failures = True
                 failures_messages.append(
                     f"[{group_name}] URL: {url} | карточек: {total}, проверено: {checked}, без абонплаты: {', '.join(missing)}"
@@ -47,17 +49,21 @@ def test_provider_cards_abonent_fee():
                     when_utc=datetime.now(timezone.utc),
                     providers_without_fee=missing,
                 )
-                message = (
-                    "Пропало поле «Абонентская плата»\n"
-                    f"Сайт: {os.path.basename(url)}\n"
-                    f"Ссылка на отчёт: {get_sheet_url(config.sheet_id) or ''}"
-                )
-                send_telegram_alert(
-                    enabled=config.alerts_enabled,
-                    bot_token=config.bot_token,
-                    chat_id=config.chat_id,
-                    message=message,
-                )
+                should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
+                if should_alert:
+                    message = (
+                        "Пропало поле «Абонентская плата»\n"
+                        f"Страница: {url}\n"
+                        f"Ссылка на отчёт: {get_sheet_url(config.sheet_id) or ''}"
+                    )
+                    send_telegram_alert(
+                        enabled=config.alerts_enabled,
+                        bot_token=config.bot_token,
+                        chat_id=config.chat_id,
+                        message=message,
+                    )
+            else:
+                update_status_for_check(config.stats_file, url, is_failure=False)
 
     if not any_failures and config.success_alerts_enabled:
         groups_list = ", ".join(sorted(groups.keys()))

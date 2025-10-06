@@ -9,6 +9,7 @@ from src.selenium_checker import check_url_for_missing_fee
 from src.sheets_appender import append_negative_result, get_sheet_url
 from src.telegram_alerts import send_telegram_alert
 from src.url_source import load_groups
+from src.escalation import update_status_for_check
 
 
 def main() -> int:
@@ -46,7 +47,8 @@ def main() -> int:
                 headless=config.headless,
                 wait_seconds=config.wait_timeout_seconds,
             )
-            if missing:
+            is_failure = bool(missing)
+            if is_failure:
                 any_failures = True
                 logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
 
@@ -59,22 +61,26 @@ def main() -> int:
                     providers_without_fee=missing,
                 )
 
-                parsed = urlparse(url)
-                domain = parsed.netloc
-                sheet_url = get_sheet_url(config.sheet_id) or ""
-                message = (
-                    "Пропало поле «Абонентская плата»\n"
-                    f"Сайт: {domain}\n"
-                    f"Ссылка на отчёт: {sheet_url}"
-                )
-                send_telegram_alert(
-                    enabled=config.alerts_enabled,
-                    bot_token=config.bot_token,
-                    chat_id=config.chat_id,
-                    message=message,
-                )
+                should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
+                if should_alert:
+                    parsed = urlparse(url)
+                    domain = parsed.netloc
+                    sheet_url = get_sheet_url(config.sheet_id) or ""
+                    message = (
+                        "Пропало поле «Абонентская плата»\n"
+                        f"Сайт: {domain}\n"
+                        f"Страница: {url}\n"
+                        f"Ссылка на отчёт: {sheet_url}"
+                    )
+                    send_telegram_alert(
+                        enabled=config.alerts_enabled,
+                        bot_token=config.bot_token,
+                        chat_id=config.chat_id,
+                        message=message,
+                    )
             else:
                 logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
+                update_status_for_check(config.stats_file, url, is_failure=False)
 
     if not any_failures and config.success_alerts_enabled:
         groups_list = ", ".join(sorted(selected.keys()))
