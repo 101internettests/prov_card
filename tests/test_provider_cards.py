@@ -59,4 +59,20 @@ def test_provider_cards_abonent_fee():
                     message=message,
                 )
 
+    if not any_failures and config.success_alerts_enabled:
+        groups_list = ", ".join(sorted(groups.keys()))
+        sheet_url = get_sheet_url(config.sheet_id) or ""
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
+        send_telegram_alert(
+            enabled=True,
+            bot_token=config.bot_token,
+            chat_id=config.chat_id,
+            message=(
+                "Проверка прошла успешно\n"
+                f"Группы: {groups_list}\n"
+                f"Ссылка на отчёт: {sheet_url}\n"
+                f"Время проверки: {ts}"
+            ),
+        )
+
     assert not any_failures, "\n" + "\n".join(failures_messages)

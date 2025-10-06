@@ -78,13 +78,17 @@ def main() -> int:
 
     if not any_failures and config.success_alerts_enabled:
         groups_list = ", ".join(sorted(selected.keys()))
+        sheet_url = get_sheet_url(config.sheet_id) or ""
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
         send_telegram_alert(
-            enabled=True,  # успехи отправляем только если глобально включено SUCCESS_ALERTS_ENABLED
+            enabled=True,
             bot_token=config.bot_token,
             chat_id=config.chat_id,
             message=(
                 "Проверка прошла успешно\n"
-                f"Группы: {groups_list}"
+                f"Группы: {groups_list}\n"
+                f"Ссылка на отчёт: {sheet_url}\n"
+                f"Время проверки: {ts}"
             ),
         )
 
