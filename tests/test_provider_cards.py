@@ -3,6 +3,15 @@ from datetime import datetime, timezone
 
 import pytest
 
+import os as _os
+import sys as _sys
+_ROOT = _os.path.dirname(_os.path.abspath(__file__))
+_SRC = _os.path.join(_ROOT, "..", "src")
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+if _SRC not in _sys.path:
+    _sys.path.append(_SRC)
+
 from src.config import load_config
 from src.logging_setup import setup_logging
 from src.selenium_checker import check_url_for_missing_fee

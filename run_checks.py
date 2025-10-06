@@ -2,6 +2,16 @@ import argparse
 import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+import os as _os
+import sys as _sys
+
+# Гарантируем доступность корня и src/ для импорта
+_ROOT = _os.path.dirname(_os.path.abspath(__file__))
+_SRC = _os.path.join(_ROOT, "src")
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+if _SRC not in _sys.path:
+    _sys.path.append(_SRC)
 
 from src.config import load_config
 from src.logging_setup import setup_logging
