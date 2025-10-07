@@ -24,6 +24,10 @@ class Config:
     wait_timeout_seconds: int
     log_dir: str
     stats_file: str
+    page_load_strategy: str
+    disable_images: bool
+    disable_css: bool
+    disable_fonts: bool
 
 
 def load_config() -> Config:
@@ -50,6 +54,13 @@ def load_config() -> Config:
     log_dir = os.getenv("LOG_DIR", "logs")
     stats_file = os.getenv("STATS_FILE", "data/stat_prov.json")
 
+    page_load_strategy = os.getenv("PAGE_LOAD_STRATEGY", "eager").strip().lower()
+    if page_load_strategy not in {"normal", "eager", "none"}:
+        page_load_strategy = "eager"
+    disable_images = _parse_bool(os.getenv("DISABLE_IMAGES", "true"), True)
+    disable_css = _parse_bool(os.getenv("DISABLE_CSS", "true"), True)
+    disable_fonts = _parse_bool(os.getenv("DISABLE_FONTS", "true"), True)
+
     return Config(
         urls_dir=urls_dir,
         headless=headless,
@@ -63,4 +74,8 @@ def load_config() -> Config:
         wait_timeout_seconds=wait_timeout_seconds,
         log_dir=log_dir,
         stats_file=stats_file,
+        page_load_strategy=page_load_strategy,
+        disable_images=disable_images,
+        disable_css=disable_css,
+        disable_fonts=disable_fonts,
     )
