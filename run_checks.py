@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 import os as _os
 import sys as _sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Гарантируем доступность корня и src/ для импорта
 _ROOT = _os.path.dirname(_os.path.abspath(__file__))
@@ -22,9 +24,30 @@ from src.url_source import load_groups
 from src.escalation import update_status_for_check
 
 
+def _check_url_parallel(url: str, cfg) -> tuple[str, list[str], int, int]:
+    driver = build_driver(
+        headless=cfg.headless,
+        wait_seconds=cfg.wait_timeout_seconds,
+        page_load_strategy=cfg.page_load_strategy,
+        disable_images=cfg.disable_images,
+        disable_css=cfg.disable_css,
+        disable_fonts=cfg.disable_fonts,
+    )
+    try:
+        missing, total, checked = check_url_with_driver(
+            driver=driver,
+            url=url,
+            wait_seconds=cfg.wait_timeout_seconds,
+        )
+        return url, missing, total, checked
+    finally:
+        driver.quit()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка наличия поля 'Абонентская плата' в карточках провайдеров")
     parser.add_argument("--group", help="Имя группы (лист Excel или имя файла без .txt)", default=None)
+    parser.add_argument("--workers", type=int, default=1, help="Параллельных потоков на группу (>=1)")
     args = parser.parse_args()
 
     config = load_config()
@@ -50,51 +73,111 @@ def main() -> int:
 
     any_failures = False
     for group_name, urls in selected.items():
-        logging.info("Группа: %s (кол-во URL: %d)", group_name, len(urls))
-        driver = build_driver(headless=config.headless, wait_seconds=config.wait_timeout_seconds)
-        try:
-            for url in urls:
-                missing, total, checked = check_url_with_driver(
-                    driver=driver,
-                    url=url,
-                    wait_seconds=config.wait_timeout_seconds,
-                )
-                is_failure = bool(missing)
-                if is_failure:
-                    any_failures = True
-                    logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
+        logging.info("Группа: %s (кол-во URL: %d, workers=%d)", group_name, len(urls), max(1, args.workers))
 
-                    append_negative_result(
-                        sheet_id=config.sheet_id,
-                        service_account_json=config.google_service_account_json,
-                        worksheet_title=config.sheet_worksheet_title,
+        if max(1, args.workers) == 1:
+            driver = build_driver(
+                headless=config.headless,
+                wait_seconds=config.wait_timeout_seconds,
+                page_load_strategy=config.page_load_strategy,
+                disable_images=config.disable_images,
+                disable_css=config.disable_css,
+                disable_fonts=config.disable_fonts,
+            )
+            try:
+                for url in urls:
+                    missing, total, checked = check_url_with_driver(
+                        driver=driver,
                         url=url,
-                        when_utc=datetime.now(timezone.utc),
-                        providers_without_fee=missing,
+                        wait_seconds=config.wait_timeout_seconds,
                     )
+                    is_failure = bool(missing)
+                    if is_failure:
+                        any_failures = True
+                        logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
 
-                    should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
-                    if should_alert:
-                        parsed = urlparse(url)
-                        domain = parsed.netloc
-                        sheet_url = get_sheet_url(config.sheet_id) or ""
-                        message = (
-                            "Пропало поле «Абонентская плата»\n"
-                            f"Сайт: {domain}\n"
-                            f"Страница: {url}\n"
-                            f"Ссылка на отчёт: {sheet_url}"
+                        append_negative_result(
+                            sheet_id=config.sheet_id,
+                            service_account_json=config.google_service_account_json,
+                            worksheet_title=config.sheet_worksheet_title,
+                            url=url,
+                            when_utc=datetime.now(timezone.utc),
+                            providers_without_fee=missing,
                         )
-                        send_telegram_alert(
-                            enabled=config.alerts_enabled,
-                            bot_token=config.bot_token,
-                            chat_id=config.chat_id,
-                            message=message,
+
+                        should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
+                        if should_alert:
+                            parsed = urlparse(url)
+                            domain = parsed.netloc
+                            sheet_url = get_sheet_url(config.sheet_id) or ""
+                            message = (
+                                "Пропало поле «Абонентская плата»\n"
+                                f"Сайт: {domain}\n"
+                                f"Страница: {url}\n"
+                                f"Ссылка на отчёт: {sheet_url}"
+                            )
+                            send_telegram_alert(
+                                enabled=config.alerts_enabled,
+                                bot_token=config.bot_token,
+                                chat_id=config.chat_id,
+                                message=message,
+                            )
+                    else:
+                        logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
+                        update_status_for_check(config.stats_file, url, is_failure=False)
+            finally:
+                driver.quit()
+        else:
+            sheet_url = get_sheet_url(config.sheet_id) or ""
+            stats_lock = threading.Lock()
+            with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
+                future_to_url = {executor.submit(_check_url_parallel, url, config): url for url in urls}
+                for future in as_completed(future_to_url):
+                    url = future_to_url[future]
+                    try:
+                        url, missing, total, checked = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        logging.error("Ошибка при обработке %s: %s", url, exc)
+                        with stats_lock:
+                            update_status_for_check(config.stats_file, url, is_failure=True)
+                        any_failures = True
+                        continue
+
+                    is_failure = bool(missing)
+                    if is_failure:
+                        any_failures = True
+                        logging.warning("URL: %s | карточек: %d, проверено: %d, без абонплаты: %s", url, total, checked, ", ".join(missing))
+
+                        append_negative_result(
+                            sheet_id=config.sheet_id,
+                            service_account_json=config.google_service_account_json,
+                            worksheet_title=config.sheet_worksheet_title,
+                            url=url,
+                            when_utc=datetime.now(timezone.utc),
+                            providers_without_fee=missing,
                         )
-                else:
-                    logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
-                    update_status_for_check(config.stats_file, url, is_failure=False)
-        finally:
-            driver.quit()
+
+                        with stats_lock:
+                            should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
+                        if should_alert:
+                            parsed = urlparse(url)
+                            domain = parsed.netloc
+                            message = (
+                                "Пропало поле «Абонентская плата»\n"
+                                f"Сайт: {domain}\n"
+                                f"Страница: {url}\n"
+                                f"Ссылка на отчёт: {sheet_url}"
+                            )
+                            send_telegram_alert(
+                                enabled=config.alerts_enabled,
+                                bot_token=config.bot_token,
+                                chat_id=config.chat_id,
+                                message=message,
+                            )
+                    else:
+                        logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
+                        with stats_lock:
+                            update_status_for_check(config.stats_file, url, is_failure=False)
 
     if not any_failures and config.success_alerts_enabled:
         groups_list = ", ".join(sorted(selected.keys()))
