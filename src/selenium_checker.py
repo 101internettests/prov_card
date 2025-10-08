@@ -14,7 +14,7 @@ PROVIDER_CARD_XPATH = "//div[@data-sentry-component='ProviderCardFull']"
 BUTTON_IN_CARD_XPATH = ".//div[@data-sentry-element='TextPriceButtonTariff']"
 
 
-def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "eager", disable_images: bool = True, disable_css: bool = True, disable_fonts: bool = True) -> webdriver.Chrome:
+def build_driver(headless: bool, wait_seconds: int) -> webdriver.Chrome:
     options = Options()
     if headless:
         options.add_argument("--headless=new")
@@ -22,14 +22,7 @@ def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "e
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    options.page_load_strategy = page_load_strategy
-
-    prefs = {"profile.managed_default_content_settings.images": 2 if disable_images else 1}
-    options.add_experimental_option("prefs", prefs)
-
-    # DevTools команды для отключения CSS/шрифтов не стандартны, но можно снизить трафик:
-    # В headless режиме эффекты ограничены, однако отключение картинок уже даёт выигрыш.
-
+    # Можно ускорить: options.page_load_strategy = 'eager'
     driver = webdriver.Chrome(options=options)
     # Даем больше времени навигации в headless/Jenkins среде
     driver.set_page_load_timeout(max(60, wait_seconds * 4))
