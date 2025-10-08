@@ -1,6 +1,7 @@
 import logging
 from typing import List, Optional
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import gspread
 
@@ -34,7 +35,11 @@ def append_negative_result(
         else:
             worksheet = spreadsheet.sheet1
 
-        ts = (when_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
+        ts = (
+            (when_utc or datetime.now(timezone.utc))
+            .astimezone(ZoneInfo("Europe/Moscow"))
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
         providers_str = ", ".join(providers_without_fee) if providers_without_fee else "-"
         row = [url, ts, providers_str]
         worksheet.append_row(row, value_input_option="RAW")

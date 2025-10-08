@@ -86,3 +86,10 @@ def update_status_for_check(stats_path: str, url: str, is_failure: bool) -> bool
     stats[url] = current
     save_stats(stats_path, stats)
     return alert_now
+
+
+def get_consecutive_failures(stats_path: str, url: str) -> int:
+    """Возвращает текущее количество подряд идущих неуспешных прогонов по URL."""
+    stats = load_stats(stats_path)
+    current = stats.get(url)
+    return int(current.consecutive_failures) if current else 0

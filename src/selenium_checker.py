@@ -46,6 +46,14 @@ def _has_span_with_text(card, text: str) -> bool:
 
 
 def _extract_provider_name(card) -> str:
+    # Preferred header selector
+    header_elems = card.find_elements(By.XPATH, ".//p[contains(@class,'ProviderCardHeader')]")
+    for el in header_elems:
+        name = (el.text or "").strip()
+        if name and re.search(r"[A-Za-zА-Яа-я]", name):
+            return name
+
+    # Fallbacks: semantic headings
     for xp in [
         ".//*[@role='heading']",
         ".//h1",
@@ -57,11 +65,16 @@ def _extract_provider_name(card) -> str:
         elems = card.find_elements(By.XPATH, xp)
         for el in elems:
             name = (el.text or "").strip()
-            if name:
+            if name and re.search(r"[A-Za-zА-Яа-я]", name):
                 return name
+
+    # Last resort: first text line with letters
     text = (card.text or "").strip()
     if text:
-        return text.splitlines()[0][:80]
+        for line in text.splitlines():
+            candidate = line.strip()
+            if candidate and re.search(r"[A-Za-zА-Яа-я]", candidate):
+                return candidate[:80]
     return "Неизвестный провайдер"
 
 
