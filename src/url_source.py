@@ -52,3 +52,4 @@ def load_groups(urls_dir_or_file: str) -> Dict[str, List[str]]:
     if os.path.isfile(urls_dir_or_file) and urls_dir_or_file.lower().endswith(".xlsx"):
         return read_urls_from_xlsx(urls_dir_or_file)
     raise FileNotFoundError(f"Не найдена директория/файл URL: {urls_dir_or_file}")
+

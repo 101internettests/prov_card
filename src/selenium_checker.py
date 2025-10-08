@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 
 PROVIDER_CARD_XPATH = "//div[@data-sentry-component='ProviderCardFull']"
@@ -30,7 +31,8 @@ def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "e
     # В headless режиме эффекты ограничены, однако отключение картинок уже даёт выигрыш.
 
     driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(60)
+    # Даем больше времени навигации в headless/Jenkins среде
+    driver.set_page_load_timeout(max(60, wait_seconds * 4))
     driver.implicitly_wait(wait_seconds)
     return driver
 
@@ -78,7 +80,14 @@ def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int 
     checked_cards = 0
 
     logging.info("Открываю URL: %s", url)
-    driver.get(url)
+    try:
+        driver.get(url)
+    except TimeoutException:
+        logging.warning("Таймаут загрузки при переходе на %s, повторная попытка", url)
+        try:
+            driver.get(url)
+        except TimeoutException:
+            logging.warning("Повторный таймаут загрузки %s, продолжаем с уже загруженным контентом", url)
 
     WebDriverWait(driver, wait_seconds).until(
         EC.presence_of_element_located((By.XPATH, PROVIDER_CARD_XPATH))
@@ -89,12 +98,16 @@ def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int 
     logging.info("Найдено карточек провайдеров: %s", total_cards)
 
     cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
-    if len(cards_with_button) < total_cards:
+    num_with_button = len(cards_with_button)
+    if 0 < num_with_button < total_cards:
         target_cards = cards_with_button
         logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
     else:
         target_cards = cards
-        logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
+        if num_with_button == 0:
+            logging.info("Кнопок не найдено, проверяем все карточки: %d", len(target_cards))
+        else:
+            logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
 
     for idx, card in enumerate(target_cards, start=1):
         has_speed = _has_span_with_text(card, "Скорость")

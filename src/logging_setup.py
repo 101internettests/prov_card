@@ -31,3 +31,4 @@ def setup_logging(log_dir: Optional[str] = None) -> None:
         handlers.append(file_handler)
 
     logger.handlers = handlers
+

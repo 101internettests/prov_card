@@ -43,3 +43,4 @@ def append_negative_result(
     except Exception as exc:  # gspread/IO errors
         logging.exception("Не удалось записать в Google Sheets: %s", exc)
         return False
+

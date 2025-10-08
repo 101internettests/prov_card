@@ -140,7 +140,15 @@ def main() -> int:
                     executor.submit(_check_url_parallel, url, config): url for url in urls
                 }
                 for future in as_completed(future_to_url):
-                    url, missing, total, checked = future.result()
+                    url = future_to_url[future]
+                    try:
+                        url, missing, total, checked = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        logging.error("Ошибка при обработке %s: %s", url, exc)
+                        with stats_lock:
+                            update_status_for_check(config.stats_file, url, is_failure=True)
+                        any_failures = True
+                        continue
                     is_failure = bool(missing)
                     if is_failure:
                         any_failures = True
