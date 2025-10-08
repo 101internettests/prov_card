@@ -89,12 +89,16 @@ def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int 
     logging.info("Найдено карточек провайдеров: %s", total_cards)
 
     cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
-    if len(cards_with_button) < total_cards:
+    num_with_button = len(cards_with_button)
+    if 0 < num_with_button < total_cards:
         target_cards = cards_with_button
         logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
     else:
         target_cards = cards
-        logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
+        if num_with_button == 0:
+            logging.info("Кнопок не найдено, проверяем все карточки: %d", len(target_cards))
+        else:
+            logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
 
     for idx, card in enumerate(target_cards, start=1):
         has_speed = _has_span_with_text(card, "Скорость")
