@@ -18,7 +18,7 @@ if _SRC not in _sys.path:
 
 from src.config import load_config
 from src.logging_setup import setup_logging
-from src.selenium_checker import check_url_with_driver, build_driver, check_url_for_missing_fee
+from src.selenium_checker import check_url_with_driver, build_driver, check_url_for_missing_fee, PageOpenTimeout
 from src.sheets_appender import append_negative_result, get_sheet_url
 from src.telegram_alerts import send_telegram_alert
 from src.url_source import load_urls
@@ -69,6 +69,7 @@ def main() -> int:
     stats_lock = threading.Lock()
 
     logging.info("Кол-во URL: %d, workers=%d", len(urls), max(1, args.workers))
+    timed_out_urls: list[str] = []
 
     if max(1, args.workers) == 1:
             # Последовательно: создаём и закрываем браузер для каждого URL, чтобы исключить зависание на финальном quit()
@@ -114,6 +115,11 @@ def main() -> int:
                         logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
                         with stats_lock:
                             update_status_for_check(config.stats_file, url, is_failure=False)
+                except PageOpenTimeout as exc:
+                    logging.info("URL пропущен из-за таймаута: %s", exc.url)
+                    timed_out_urls.append(exc.url)
+                    with stats_lock:
+                        update_status_for_check(config.stats_file, url, is_failure=False)
                 except Exception as exc:
                     any_failures = True
                     logging.exception("Ошибка при обработке URL (sequential): %s | %s", url, exc)
@@ -166,6 +172,11 @@ def main() -> int:
                         logging.info("URL: %s | карточек: %d, проверено: %d, все ок", url, total, checked)
                         with stats_lock:
                             update_status_for_check(config.stats_file, url, is_failure=False)
+                except PageOpenTimeout as exc:
+                    logging.info("URL пропущен из-за таймаута: %s", exc.url)
+                    timed_out_urls.append(exc.url)
+                    with stats_lock:
+                        update_status_for_check(config.stats_file, url, is_failure=False)
                 except Exception as exc:
                     any_failures = True
                     logging.exception("Ошибка при обработке URL (parallel): %s | %s", url, exc)
@@ -179,15 +190,18 @@ def main() -> int:
             .astimezone(ZoneInfo("Europe/Moscow"))
             .strftime("%Y-%m-%d %H:%M:%S %Z")
         )
+        success_msg = (
+            "Проверка прошла успешно\n"
+            f"Проверено URL: {total_checked}\n"
+            f"Время проверки (МСК): {ts_msk}"
+        )
+        if timed_out_urls:
+            success_msg += "\nНе открылись (по таймауту):\n" + "\n".join(timed_out_urls)
         send_telegram_alert(
             enabled=True,
             bot_token=config.bot_token,
             chat_id=config.chat_id,
-            message=(
-                "Проверка прошла успешно\n"
-                f"Проверено URL: {total_checked}\n"
-                f"Время проверки (МСК): {ts_msk}"
-            ),
+            message=success_msg,
         )
 
     return 1 if any_failures else 0

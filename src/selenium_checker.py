@@ -2,10 +2,15 @@ from typing import List, Tuple
 import logging
 import re
 
-from playwright.sync_api import sync_playwright, Page, Locator
+from playwright.sync_api import sync_playwright, Page, Locator, TimeoutError as PlaywrightTimeoutError
 
 
 PROVIDER_CARD_XPATH = "xpath=//div[@data-sentry-component='ProviderCardFull']"
+class PageOpenTimeout(Exception):
+    def __init__(self, url: str):
+        super().__init__(f"Page open timeout: {url}")
+        self.url = url
+
 TARIFF_BUTTONS_XPATH = "xpath=//div[contains(@class,'TariffCard')]//div[contains(@class,'TextPriceButtonTariff_price-button')]"
 
 
@@ -40,6 +45,11 @@ def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "e
 
     page = context.new_page()
     page.set_default_timeout(max(1, wait_seconds) * 1000)
+    # Явный таймаут на навигацию: 20 секунд
+    try:
+        page.set_default_navigation_timeout(20000)
+    except Exception:
+        pass
     return PlaywrightDriver(p=p, browser=browser, context=context, page=page)
 
 
@@ -87,7 +97,12 @@ def check_url_with_driver(driver, url: str, wait_seconds: int = 15) -> Tuple[Lis
     logging.info("Открываю URL: %s", url)
     page: Page = driver.page
     page.set_default_timeout(max(1, wait_seconds) * 1000)
-    page.goto(url, wait_until="domcontentloaded", timeout=max(1, wait_seconds) * 1000)
+    # Навигация с фиксированным таймаутом 20 секунд
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    except PlaywrightTimeoutError as exc:
+        logging.info("Таймаут открытия страницы: %s", url)
+        raise PageOpenTimeout(url) from exc
 
     cards = page.locator(PROVIDER_CARD_XPATH)
     total_cards = cards.count()
