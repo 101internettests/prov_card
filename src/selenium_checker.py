@@ -2,37 +2,45 @@ from typing import List, Tuple
 import logging
 import re
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.sync_api import sync_playwright, Page, Locator
 
 
-PROVIDER_CARD_XPATH = "//div[@data-sentry-component='ProviderCardFull']"
-BUTTON_IN_CARD_XPATH = ".//div[@data-sentry-element='TextPriceButtonTariff']"
+PROVIDER_CARD_XPATH = "xpath=//div[@data-sentry-component='ProviderCardFull']"
+TARIFF_BUTTONS_XPATH = "xpath=//div[contains(@class,'TariffCard')]//div[contains(@class,'TextPriceButtonTariff_price-button')]"
 
 
-def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "eager", disable_images: bool = True, disable_css: bool = True, disable_fonts: bool = True) -> webdriver.Chrome:
-    options = Options()
-    if headless:
-        options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.page_load_strategy = page_load_strategy
+class PlaywrightDriver:
+    def __init__(self, p, browser, context, page: Page):
+        self._p = p
+        self._browser = browser
+        self._context = context
+        self.page = page
 
-    prefs = {"profile.managed_default_content_settings.images": 2 if disable_images else 1}
-    options.add_experimental_option("prefs", prefs)
+    def quit(self) -> None:
+        try:
+            self._context.close()
+        except Exception:
+            pass
+        try:
+            self._browser.close()
+        except Exception:
+            pass
+        try:
+            self._p.stop()
+        except Exception:
+            pass
 
-    # DevTools команды для отключения CSS/шрифтов не стандартны, но можно снизить трафик:
-    # В headless режиме эффекты ограничены, однако отключение картинок уже даёт выигрыш.
 
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(60)
-    driver.implicitly_wait(wait_seconds)
-    return driver
+def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "eager", disable_images: bool = True, disable_css: bool = True, disable_fonts: bool = True) -> PlaywrightDriver:
+    p = sync_playwright().start()
+    browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+    )
+
+    page = context.new_page()
+    page.set_default_timeout(max(1, wait_seconds) * 1000)
+    return PlaywrightDriver(p=p, browser=browser, context=context, page=page)
 
 
 def _normalize_text(value: str) -> str:
@@ -40,36 +48,22 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", lowered).strip()
 
 
-def _has_span_with_text(card, text: str) -> bool:
-    xp = f".//span[normalize-space(text())='{text}']"
-    return len(card.find_elements(By.XPATH, xp)) > 0
+def _has_span_with_text(card: Locator, text: str) -> bool:
+    xp = f"xpath=.//span[text()='{text}']"
+    return card.locator(xp).count() > 0
 
 
-def _extract_provider_name(card) -> str:
-    # Preferred header selector
-    header_elems = card.find_elements(By.XPATH, ".//p[contains(@class,'ProviderCardHeader')]")
-    for el in header_elems:
-        name = (el.text or "").strip()
-        if name and re.search(r"[A-Za-zА-Яа-я]", name):
-            return name
+def _extract_provider_name(card: Locator) -> str:
+    name_locator = card.locator(
+        "xpath=.//div[contains(@class,'ProviderCardHeader_provider-block')]//p[contains(@class,'ProviderCardHeader')]"
+    )
+    c = name_locator.count()
+    for i in range(c):
+        txt = (name_locator.nth(i).text_content(timeout=0) or "").strip()
+        if txt and re.search(r"[A-Za-zА-Яа-я]", txt):
+            return txt
 
-    # Fallbacks: semantic headings
-    for xp in [
-        ".//*[@role='heading']",
-        ".//h1",
-        ".//h2",
-        ".//h3",
-        ".//h4",
-        ".//h5",
-    ]:
-        elems = card.find_elements(By.XPATH, xp)
-        for el in elems:
-            name = (el.text or "").strip()
-            if name and re.search(r"[A-Za-zА-Яа-я]", name):
-                return name
-
-    # Last resort: first text line with letters
-    text = (card.text or "").strip()
+    text = (card.text_content(timeout=0) or "").strip()
     if text:
         for line in text.splitlines():
             candidate = line.strip()
@@ -78,7 +72,7 @@ def _extract_provider_name(card) -> str:
     return "Неизвестный провайдер"
 
 
-def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
+def check_url_with_driver(driver, url: str, wait_seconds: int = 15) -> Tuple[List[str], int, int]:
     """
     Проверка страницы, используя уже созданный драйвер.
     Возвращает (провайдеры_без_абонплаты, всего_карточек, проверено_карточек).
@@ -91,25 +85,31 @@ def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int 
     checked_cards = 0
 
     logging.info("Открываю URL: %s", url)
-    driver.get(url)
+    page: Page = driver.page
+    page.set_default_timeout(max(1, wait_seconds) * 1000)
+    page.goto(url, wait_until="domcontentloaded", timeout=max(1, wait_seconds) * 1000)
 
-    WebDriverWait(driver, wait_seconds).until(
-        EC.presence_of_element_located((By.XPATH, PROVIDER_CARD_XPATH))
-    )
-
-    cards = driver.find_elements(By.XPATH, PROVIDER_CARD_XPATH)
-    total_cards = len(cards)
+    cards = page.locator(PROVIDER_CARD_XPATH)
+    total_cards = cards.count()
     logging.info("Найдено карточек провайдеров: %s", total_cards)
+    if total_cards == 0:
+        # Ничего не найдено быстро — не ждём, продолжаем без зависаний
+        return [], 0, 0
 
-    cards_with_button = [c for c in cards if len(c.find_elements(By.XPATH, BUTTON_IN_CARD_XPATH)) > 0]
-    if len(cards_with_button) < total_cards:
-        target_cards = cards_with_button
-        logging.info("Ориентируемся на карточки с кнопкой: %d из %d", len(target_cards), total_cards)
-    else:
-        target_cards = cards
-        logging.info("Кнопок не меньше карточек, проверяем все карточки: %d", len(target_cards))
+    # Сравнение количества заголовков с текстами и числа кнопок тарифов
+    fee_headers = page.locator("xpath=//div[@data-sentry-component='ProviderCardFull']//span[text()='Абонентская плата']").count()
+    speed_headers = page.locator("xpath=//div[@data-sentry-component='ProviderCardFull']//span[text()='Скорость']").count()
+    connect_headers = page.locator("xpath=//div[@data-sentry-component='ProviderCardFull']//span[text()='Подключение']").count()
+    headers_count = min(fee_headers, speed_headers, connect_headers)
+    buttons_count = page.locator(TARIFF_BUTTONS_XPATH).count()
+    logging.info("Кнопок тарифов: %d, заголовков (мин по трем): %d", buttons_count, headers_count)
 
-    for idx, card in enumerate(target_cards, start=1):
+    target_cards = cards
+    logging.info("Проверяем все карточки: %d", total_cards)
+
+    target_count = target_cards.count()
+    for i in range(target_count):
+        card = target_cards.nth(i)
         has_speed = _has_span_with_text(card, "Скорость")
         has_connect = _has_span_with_text(card, "Подключение")
         if not (has_speed and has_connect):
@@ -120,7 +120,7 @@ def check_url_with_driver(driver: webdriver.Chrome, url: str, wait_seconds: int 
         if not has_fee:
             name = _extract_provider_name(card)
             if not name:
-                name = f"Провайдер #{idx}"
+                name = f"Провайдер #{i + 1}"
             missing.append(name)
 
     return missing, total_cards, checked_cards
