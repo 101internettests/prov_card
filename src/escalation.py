@@ -55,12 +55,8 @@ def save_stats(path: str, stats: Dict[str, UrlStatus]) -> None:
 
 
 def should_alert_for_failure(count: int) -> bool:
-    # Схема: 1-й, 4-й, 12-й прогон, далее каждые 10-й (20, 30, 40, ...)
-    if count in (1, 4, 12):
-        return True
-    if count >= 20 and count % 10 == 0:
-        return True
-    return False
+    # Отправляем алерт при каждом неуспешном прогоне
+    return count >= 1
 
 
 def update_status_for_check(stats_path: str, url: str, is_failure: bool) -> bool:

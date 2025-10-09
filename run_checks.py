@@ -21,7 +21,7 @@ from src.selenium_checker import check_url_with_driver, build_driver
 from src.sheets_appender import append_negative_result, get_sheet_url
 from src.telegram_alerts import send_telegram_alert
 from src.url_source import load_groups
-from src.escalation import update_status_for_check, get_consecutive_failures
+from src.escalation import update_status_for_check
 
 
 def _check_url_parallel(url: str, cfg) -> tuple[str, list[str], int, int]:
@@ -112,7 +112,6 @@ def main() -> int:
 
                         with stats_lock:
                             should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
-                            repeat_count = get_consecutive_failures(config.stats_file, url)
                         if should_alert:
                             parsed = urlparse(url)
                             domain = parsed.netloc
@@ -122,8 +121,6 @@ def main() -> int:
                                 f"Страница: {url}\n"
                                 f"Ссылка на отчёт: {sheet_url}"
                             )
-                            if repeat_count >= 2:
-                                message += f"\nПовторный прогон ошибки: {repeat_count} (ошибка все еще актуальна)"
                             send_telegram_alert(
                                 enabled=config.alerts_enabled,
                                 bot_token=config.bot_token,
@@ -160,7 +157,6 @@ def main() -> int:
 
                         with stats_lock:
                             should_alert = update_status_for_check(config.stats_file, url, is_failure=True)
-                            repeat_count = get_consecutive_failures(config.stats_file, url)
                         if should_alert:
                             parsed = urlparse(url)
                             domain = parsed.netloc
@@ -170,8 +166,6 @@ def main() -> int:
                                 f"Страница: {url}\n"
                                 f"Ссылка на отчёт: {sheet_url}"
                             )
-                            if repeat_count >= 2:
-                                message += f"\nПовторный прогон ошибки: {repeat_count} (ошибка все еще актуальна)"
                             send_telegram_alert(
                                 enabled=config.alerts_enabled,
                                 bot_token=config.bot_token,
