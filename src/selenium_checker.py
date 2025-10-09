@@ -1,4 +1,5 @@
 from typing import List, Tuple
+from urllib.parse import urlparse
 import logging
 import re
 
@@ -41,6 +42,12 @@ def build_driver(headless: bool, wait_seconds: int, page_load_strategy: str = "e
     browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
     context = browser.new_context(
         viewport={"width": 1920, "height": 1080},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        locale="ru-RU",
+        timezone_id="Europe/Moscow",
     )
 
     page = context.new_page()
@@ -98,8 +105,13 @@ def check_url_with_driver(driver, url: str, wait_seconds: int = 15) -> Tuple[Lis
     page: Page = driver.page
     page.set_default_timeout(max(1, wait_seconds) * 1000)
     # Навигация с фиксированным таймаутом 20 секунд
+    # Пер-URL таймаут: тяжелые домены — больше
+    host = urlparse(url).netloc.lower()
+    nav_timeout = 20000
+    if any(h in host for h in ("moskvaonline.ru", "101internet.ru")):
+        nav_timeout = 45000
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
     except PlaywrightTimeoutError as exc:
         logging.info("Таймаут открытия страницы: %s", url)
         raise PageOpenTimeout(url) from exc
